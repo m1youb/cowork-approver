@@ -9,3 +9,20 @@
 2026-05-17 19:46:58 [INFO   ] ==================================================
 2026-05-17 19:46:58 [INFO   ] CoWork Auto-Allow starting — Python 3.12.9 — pid 41420
 2026-05-17 19:46:58 [INFO   ] App started — pid=41420
+2026-05-17 19:53:50,839 [INFO] UIA: found button in window 'Claude'
+2026-05-17 19:53:50,850 [INFO] UIA click SUCCESS at (1183,801) on element 'Allow for this website'
+2026-05-17 19:54:02 [INFO   ] Engine started (poll=1.5s)
+2026-05-17 19:54:02 [INFO   ] Engine started
+2026-05-17 19:54:07 [INFO   ] Engine stopped
+2026-05-17 19:54:07 [INFO   ] Engine stopped
+2026-05-17 19:54:11 [INFO   ] Engine started (poll=1.5s)
+2026-05-17 19:54:11 [INFO   ] Engine started
+2026-05-17 19:54:16 [INFO   ] Engine stopped
+2026-05-17 19:54:16 [INFO   ] Engine stopped
+2026-05-17 19:57:02 [INFO   ] ==================================================
+2026-05-17 19:57:02 [INFO   ] CoWork Auto-Allow starting — Python 3.12.9 — pid 36652
+2026-05-17 19:57:03 [INFO   ] App started — pid=36652
+2026-05-17 19:57:05 [INFO   ] Engine started (poll=1.5s)
+2026-05-17 19:57:05 [INFO   ] Engine started
+2026-05-17 19:57:05 [INFO   ] Engine stopped
+2026-05-17 19:57:05 [INFO   ] Engine stopped

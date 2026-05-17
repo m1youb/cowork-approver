@@ -132,34 +132,32 @@ MAX_CONSECUTIVE_ERRORS = 5
 # ══════════════════════════════════════════════════════════════════════════
 
 class _SingleInstance:
-    """Prevent two copies running at once via a PID lock file."""
+    """
+    Prevent two copies running at once via a Windows named mutex.
+    The mutex is released automatically by the OS when the process dies —
+    no stale lock files, no PID reuse false-positives.
+    """
+    _MUTEX_NAME = "Global\\CoWorkAutoAllow_SingleInstance"
 
     def __init__(self):
-        self._acquired = False
+        self._mutex = None
 
     def acquire(self) -> bool:
-        try:
-            if LOCK_FILE.exists():
-                pid = LOCK_FILE.read_text().strip()
-                if pid.isdigit():
-                    # check if process is still alive
-                    import ctypes
-                    handle = ctypes.windll.kernel32.OpenProcess(0x1000, False, int(pid))
-                    if handle:
-                        ctypes.windll.kernel32.CloseHandle(handle)
-                        return False          # another instance is running
-            LOCK_FILE.write_text(str(os.getpid()))
-            self._acquired = True
-            return True
-        except Exception:
-            return True  # if check fails, let it run
+        import ctypes
+        self._mutex = ctypes.windll.kernel32.CreateMutexW(None, True, self._MUTEX_NAME)
+        # ERROR_ALREADY_EXISTS (183) means another live instance owns the mutex
+        if ctypes.windll.kernel32.GetLastError() == 183:
+            ctypes.windll.kernel32.CloseHandle(self._mutex)
+            self._mutex = None
+            return False
+        return True
 
     def release(self):
-        if self._acquired:
-            try:
-                LOCK_FILE.unlink(missing_ok=True)
-            except Exception:
-                pass
+        if self._mutex:
+            import ctypes
+            ctypes.windll.kernel32.ReleaseMutex(self._mutex)
+            ctypes.windll.kernel32.CloseHandle(self._mutex)
+            self._mutex = None
 
 
 _instance = _SingleInstance()
@@ -225,10 +223,15 @@ class Engine:
             return
         self.state = self.STOPPED
         self._stop_evt.set()
-        if self._thread and self._thread.is_alive():
-            self._thread.join(timeout=4)
+        # No join here — would block the main tkinter thread.
+        # Thread is daemon=True and exits on next _stop_evt check.
         log.info("Engine stopped")
         self._emit("Engine stopped", "info")
+
+    def join(self, timeout: float = 4.0):
+        """Block until engine thread exits. Call only from non-GUI threads (e.g. _quit)."""
+        if self._thread and self._thread.is_alive():
+            self._thread.join(timeout=timeout)
 
     def is_thread_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
@@ -750,6 +753,7 @@ class App(ctk.CTk):
     def _quit(self):
         try:
             self.engine.stop()
+            self.engine.join(timeout=3)   # wait briefly — not on main thread during normal use
         except Exception:
             pass
         try:
