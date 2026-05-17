@@ -1,0 +1,11 @@
+2026-05-17 18:51:15,597 [INFO] autoallow.py started — polling every 1.5s
+2026-05-17 18:51:15,597 [INFO] Press Ctrl+C to stop. Move mouse to screen corner for emergency abort.
+2026-05-17 18:51:15,597 [INFO] No templates in templates/. Screenshot fallback disabled. UIA-only mode active.
+2026-05-17 18:51:28,673 [INFO] autoallow.py started — polling every 1.5s
+2026-05-17 18:51:28,673 [INFO] Press Ctrl+C to stop. Move mouse to screen corner for emergency abort.
+2026-05-17 18:51:28,673 [INFO] No templates in templates/. Screenshot fallback disabled. UIA-only mode active.
+2026-05-17 18:52:06,457 [INFO] UIA: found button in window 'Claude'
+2026-05-17 18:52:06,475 [INFO] UIA click SUCCESS at (1587,716) on element 'Allow Enter'
+2026-05-17 19:46:58 [INFO   ] ==================================================
+2026-05-17 19:46:58 [INFO   ] CoWork Auto-Allow starting — Python 3.12.9 — pid 41420
+2026-05-17 19:46:58 [INFO   ] App started — pid=41420

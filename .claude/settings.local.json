@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python diagnostic.py)",
+      "Bash(python -c ' *)",
+      "Bash(python autoallow.py)",
+      "Bash(Start-Sleep 6)",
+      "Bash(Get-Content autoallow.log -Encoding utf8)",
+      "Bash(Select-Object -Last 20)",
+      "Skill(frontend-design)",
+      "Bash(pip install *)",
+      "Bash(python -c \"import app\")",
+      "PowerShell(Start-Process python -ArgumentList \"app.py\" -WorkingDirectory \"C:\\\\Users\\\\Ayoub\\\\Documents\\\\Mike Projects\\\\clicker\")",
+      "WebSearch",
+      "Bash(gh issue *)",
+      "WebFetch(domain:support.claude.com)",
+      "WebFetch(domain:zenn.dev)"
+    ]
+  }
+}
