@@ -296,7 +296,11 @@ class Engine:
         t = text.lower().strip()
         if any(x in t for x in DENY_EXCLUSIONS):
             return False
-        return any(x in t for x in ALLOW_LABELS) or any(x in t for x in self._extra_labels)
+        if any(x in t for x in ALLOW_LABELS):
+            return True
+        # Word-boundary match for user-toggled labels — prevents "schedule" from
+        # matching "Scheduled" (sidebar nav item) or "update" matching "relaunch to update v1.x".
+        return any(re.search(r'\b' + re.escape(x) + r'\b', t) for x in self._extra_labels)
 
     def _is_permission_dialog(self, elem) -> bool:
         """Return True if elem is inside a real Claude permission dialog."""

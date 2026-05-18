@@ -47,7 +47,7 @@ All candidates run the same two guards before being returned:
 
 | Guard | Logic |
 |-------|-------|
-| `_matches(name)` | Name contains an ALLOW_LABEL or extra_label AND doesn't contain a DENY_EXCLUSION |
+| `_matches(name)` | Name contains an ALLOW_LABEL (substring) or extra_label (word-boundary regex) AND doesn't contain a DENY_EXCLUSION |
 | `_is_permission_dialog(elem)` | Sibling is a reject Button (cancel/deny/esc) OR nearby Text contains a permission-context phrase |
 
 ### Priority scoring (`_label_score`)
@@ -136,6 +136,7 @@ No network calls. No env vars required.
 - **Claude Desktop renders dialogs in Chromium's web layer** — UIA exposes them as `Button` elements with the full CSS class string as `auto_id` (very long). Match on `name`, not `auto_id`.
 - **Button name includes keyboard shortcut** — e.g. `"Allow Enter"`, `"Schedule Enter"`, `"Always allow Enter"`. The `ALLOW_LABELS` list handles this via substring match.
 - **`"Allow once"` must stay in DENY_EXCLUSIONS** — it contains `"allow"` as substring but should never be clicked. Both the button name and any dropdown item exposing it must be excluded.
+- **Extra labels use word-boundary regex, ALLOW_LABELS use substring** — `"schedule"` with `\b` won't match `"Scheduled"` (sidebar nav item). ALLOW_LABELS use plain `in` because their patterns are already specific enough (`"always allow"`, `"allow enter"`, etc.).
 - **Priority pass prevents wrong-button clicks** — if MCP dialog exposes both an "Always allow" button and a plain "Allow" button, the priority pass finds "Always allow" first. Without it, UIA tree order determines which button gets clicked.
 - **COM must be initialized per thread** — pywinauto calls fail silently or crash if `pythoncom.CoInitialize()` is skipped in the engine thread.
 - **`_find_all` depth limit is 22** — Electron/Chromium UIA trees are deep (15–20 levels). Going deeper risks infinite loops on malformed trees.

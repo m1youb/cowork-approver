@@ -47,7 +47,7 @@ flowchart TD
     DENY -->|Yes| DENY_OUT([False — rejected])
     DENY -->|No| ALLOW{Any ALLOW_LABEL\nin name?\nalways allow / allow all\nbrowser actions / allow enter / allow}
     ALLOW -->|Yes| ALLOW_OUT([True — match])
-    ALLOW -->|No| EXTRA{Any extra_label\nin name?\nschedule / update / save\nrun / delete\n— per user checkboxes}
+    ALLOW -->|No| EXTRA{Any extra_label\nmatches name?\nWORD-BOUNDARY regex\n'\bschedule\b' etc.\n— per user checkboxes}
     EXTRA -->|Yes| EXTRA_OUT([True — match])
     EXTRA -->|No| NO_OUT([False — no match])
 ```
