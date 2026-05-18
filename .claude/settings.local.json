@@ -14,7 +14,16 @@
       "WebSearch",
       "Bash(gh issue *)",
       "WebFetch(domain:support.claude.com)",
-      "WebFetch(domain:zenn.dev)"
+      "WebFetch(domain:zenn.dev)",
+      "WebFetch(domain:pasqualepillitteri.it)",
+      "WebFetch(domain:kahunam.com)",
+      "WebFetch(domain:gist.github.com)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:artificialcorner.com)",
+      "WebFetch(domain:medium.com)",
+      "WebFetch(domain:mindwiredai.com)",
+      "WebFetch(domain:claudecowork.im)",
+      "WebFetch(domain:aiblewmymind.substack.com)"
     ]
   }
 }

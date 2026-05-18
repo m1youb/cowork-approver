@@ -31,8 +31,24 @@ All paths in `app.py` are relative to `Path(__file__).parent` (not CWD).
 - `docs/cli/cli.md` — headless autoallow.py, differences from app.py
 - `docs/diagnostic/diagnostic.md` — UIA dump tool, confirmed button names
 
+## Architecture diagrams
+- `architecture/system-overview/overview.md` — component map, thread model
+- `architecture/engine-flow/engine-flow.md` — poll loop sequence, startup/shutdown
+- `architecture/matching-flow/matching-flow.md` — three-pass UIA search, _matches, _is_permission_dialog
+- `architecture/engine-states/engine-states.md` — engine state machine, UI states, error backoff
+
+## Runtime files
+| File | Created by | Purpose |
+|------|-----------|---------|
+| `config.json` | App on first checkbox change | Persists `extra_labels` list across restarts |
+| `autoallow.log` | Engine | Rotating log, 1 MB max, 3 backups |
+| `crash.log` | Exception hooks | Full tracebacks from any unhandled exception |
+| `uia_tree_dump.txt` | `diagnostic.py` | UIA tree snapshot, overwritten each run |
+
 ## Warnings
 - Never use `auto_id` to match buttons — Claude Desktop (Electron) leaves it empty; CSS class string is in `auto_id` position and changes with app updates.
 - `"Allow once"` must stay in `DENY_EXCLUSIONS` — it contains `"allow"` as substring.
 - Engine thread needs `pythoncom.CoInitialize()` before first `Desktop()` call.
 - pyautogui confidence matching requires `opencv-python` — add to requirements if using templates.
+- `_find_uia` runs a priority pass for `"always allow"` before the full-pattern pass — preserves MCP "Always allow" preference over plain "Allow". Do not merge these passes.
+- Single-instance guard uses a named Windows mutex, not a PID lock file.

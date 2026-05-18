@@ -6,10 +6,11 @@ Finds and clicks Allow buttons in Claude Desktop CoWork permission dialogs via W
 
 | File | Role |
 |------|------|
-| `app.py` | Contains `Engine` class (lines 172–475) |
+| `app.py` | Contains `Engine` class (lines 201–546) |
 | `templates/` | PNG crops of Allow buttons for image fallback (optional, user-created) |
 | `autoallow.log` | Rotating log — 1 MB max, 3 backups, written next to `app.py` |
 | `crash.log` | Full tracebacks from unhandled exceptions |
+| `config.json` | Persisted user config — `extra_labels` key holds list of toggled-on optional label keys |
 
 ## How it works
 
@@ -26,21 +27,37 @@ Every `poll_interval` seconds (default 1.5 s, adjustable 0.5–5.0 s):
 4. After a successful click, waits an extra 0.4 s before next poll (lets dialog close).
 
 ### UIA button search (`_find_uia`)
-Two-pass approach:
+Three-pass approach, ordered by priority:
 
-**Fast path** — `win.child_window(title_re=..., control_type="Button")` — pywinauto's built-in BFS with regex:
+**Priority pass** — searches only for persistent-allow variants first:
 ```
-(?i)\b(always allow|allow all browser actions|allow enter|allow)\b
+(?i)(\balways allow\b|\ballow all browser actions\b)
 ```
+Uses `win.child_window(title_re=..., control_type="Button")`. If found and passes both guards → returned immediately, no further search. This ensures "Always allow" wins over plain "Allow" when both exist in the same dialog.
 
-**Slow path** — `_find(elem, depth)` — manual DFS up to depth 22, checks every `Button` element.
+**Full-pattern pass** — `win.child_window(title_re=..., control_type="Button")` with a dynamically-built regex combining ALL labels:
+```
+(?i)(\balways allow\b|\ballow all browser actions\b|\ballow enter\b|\ballow\b|\bschedule\b|\bupdate\b|...)
+```
+Pattern rebuilt every scan to reflect live checkbox state.
 
-Both passes run the same two guards before returning a candidate:
+**Slow path** — `_find(win)` — calls `_find_all` (manual DFS up to depth 22, collects all matching Button elements) then `max(..., key=_label_score)` to return the highest-priority match.
+
+All candidates run the same two guards before being returned:
 
 | Guard | Logic |
 |-------|-------|
-| `_matches(name)` | Name contains an ALLOW_LABEL AND doesn't contain a DENY_EXCLUSION |
-| `_is_permission_dialog(elem)` | Sibling is a reject Button OR nearby Text contains a permission-context phrase |
+| `_matches(name)` | Name contains an ALLOW_LABEL or extra_label AND doesn't contain a DENY_EXCLUSION |
+| `_is_permission_dialog(elem)` | Sibling is a reject Button (cancel/deny/esc) OR nearby Text contains a permission-context phrase |
+
+### Priority scoring (`_label_score`)
+Used by `_find` (slow path) to pick the best candidate when multiple Allow buttons exist in the same subtree:
+
+| Button name contains | Score |
+|---------------------|-------|
+| `"always allow"` | 4 |
+| `"allow all browser actions"` | 3 |
+| anything else (extra labels, plain allow) | 1 |
 
 ### Click (`_click`)
 1. Reads `element_info.rectangle` → computes center coords.
@@ -56,7 +73,7 @@ Both passes run the same two guards before returning a candidate:
 - **COM cleanup** — `pythoncom.CoUninitialize()` always called in `finally`.
 
 ### Shutdown
-`Engine.stop()` sets `state = STOPPED`, signals `_stop_evt`, then calls `_thread.join(timeout=4)` to wait for clean exit.
+`Engine.stop()` sets `state = STOPPED`, signals `_stop_evt`. Thread exits on next `_stop_evt.wait()` check. `Engine.join(timeout)` blocks until thread exits — call only from non-GUI threads (used by `App._quit`).
 
 ## Data structures
 
@@ -71,7 +88,7 @@ Engine.CRASHED  = "crashed"   # unrecoverable error in thread
 ```python
 {
     "ts":    "14:23:01",     # HH:MM:SS
-    "msg":   "✓  'Allow Enter'  (1587, 716)  [invoke]",
+    "msg":   "✓  'Always allow Enter'  (1587, 716)  [invoke]",
     "level": "success"       # "success" | "error" | "warn" | "info" | "crashed"
 }
 ```
@@ -79,15 +96,28 @@ Engine.CRASHED  = "crashed"   # unrecoverable error in thread
 ### Matching constants
 ```python
 ALLOW_LABELS = [
-    "always allow",               # MCP tool permission dialogs
-    "allow all browser actions",  # browser action dialogs
-    "allow enter",                # file/directory dialogs (Enter = keyboard hint)
+    "always allow",               # MCP tool permission dialogs — primary button
+    "allow all browser actions",  # browser domain dialogs
+    "allow enter",                # file/directory dialogs (Enter = keyboard shortcut in name)
     "allow",                      # generic / scheduled task dialogs
 ]
-DENY_EXCLUSIONS = ["disallow", "not allow", "deny", "allow once"]
-REJECT_WORDS    = {"deny", "cancel", "no", "reject", "decline", "block", "esc"}
+
+# User-togglable action-card labels (key, display, default_on, risky)
+OPTIONAL_LABELS = [
+    ("schedule", "Schedule", True,  False),  # confirmed UIA: "Schedule Enter"
+    ("update",   "Update",   True,  False),  # confirmed UIA: "Update Enter"
+    ("save",     "Save",     True,  False),
+    ("run",      "Run",      True,  False),
+    ("delete",   "Delete",   False, True),   # destructive — off by default
+]
+
+DENY_EXCLUSIONS    = ["disallow", "not allow", "deny", "allow once"]
+REJECT_WORDS       = {"deny", "cancel", "no", "reject", "decline", "block", "esc"}
 PERMISSION_CONTEXT = ["claude would like to", "allow claude to", "cowork"]
 ```
+
+### Extra labels (runtime)
+`Engine._extra_labels: frozenset` — loaded from `config.json` at startup, updated live via `set_extra_labels(frozenset)` when user toggles checkboxes. Atomic reference swap (GIL-safe). Persisted to `config.json` on every change.
 
 ## External dependencies
 
@@ -104,8 +134,10 @@ No network calls. No env vars required.
 ## Gotchas
 
 - **Claude Desktop renders dialogs in Chromium's web layer** — UIA exposes them as `Button` elements with the full CSS class string as `auto_id` (very long). Match on `name`, not `auto_id`.
-- **Button name includes keyboard shortcut** — e.g. `"Allow Enter"` not `"Allow"`. The `ALLOW_LABELS` list handles this via substring match.
-- **`"Allow once"` must be excluded** — it contains `"allow"` as substring but should never be clicked. Excluded via `DENY_EXCLUSIONS`.
-- **COM must be initialized per thread** — pywinauto calls fail silently or crash if `pythoncom.CoInitialize()` is skipped in the engine thread. This is done in `_loop` before the first `Desktop()` call.
-- **`_find` depth limit is 22** — Electron/Chromium UIA trees are deep (15–20 levels). Going deeper risks infinite loops on malformed trees.
+- **Button name includes keyboard shortcut** — e.g. `"Allow Enter"`, `"Schedule Enter"`, `"Always allow Enter"`. The `ALLOW_LABELS` list handles this via substring match.
+- **`"Allow once"` must stay in DENY_EXCLUSIONS** — it contains `"allow"` as substring but should never be clicked. Both the button name and any dropdown item exposing it must be excluded.
+- **Priority pass prevents wrong-button clicks** — if MCP dialog exposes both an "Always allow" button and a plain "Allow" button, the priority pass finds "Always allow" first. Without it, UIA tree order determines which button gets clicked.
+- **COM must be initialized per thread** — pywinauto calls fail silently or crash if `pythoncom.CoInitialize()` is skipped in the engine thread.
+- **`_find_all` depth limit is 22** — Electron/Chromium UIA trees are deep (15–20 levels). Going deeper risks infinite loops on malformed trees.
 - **Image fallback requires opencv-python** — `pyautogui.locate(..., confidence=...)` uses OpenCV under the hood. If not installed, confidence-based matching raises `ImportError` at locate time, not at import time.
+- **Chromium accessibility lazy init** — UIA tree only populates after an AT queries it. Run `app.py` first to wake Chromium, then `diagnostic.py`. A fresh Claude Desktop with no running UIA client will return a shallow tree.

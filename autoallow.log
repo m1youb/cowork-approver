@@ -26,3 +26,16 @@
 2026-05-17 19:57:05 [INFO   ] Engine started
 2026-05-17 19:57:05 [INFO   ] Engine stopped
 2026-05-17 19:57:05 [INFO   ] Engine stopped
+2026-05-17 20:07:12 [INFO   ] ==================================================
+2026-05-17 20:07:12 [INFO   ] CoWork Auto-Allow starting — Python 3.12.9 — pid 38612
+2026-05-17 20:07:12 [INFO   ] App started — pid=38612
+2026-05-17 20:07:42 [INFO   ] Engine started (poll=1.5s)
+2026-05-17 20:07:42 [INFO   ] Engine started
+2026-05-17 20:07:50 [INFO   ] Engine stopped
+2026-05-17 20:07:50 [INFO   ] Engine stopped
+2026-05-18 21:43:23 [INFO   ] ==================================================
+2026-05-18 21:43:23 [INFO   ] CoWork Auto-Allow starting — Python 3.12.9 — pid 39144
+2026-05-18 21:43:23 [INFO   ] App started — pid=39144
+2026-05-18 22:34:44 [INFO   ] ==================================================
+2026-05-18 22:34:44 [INFO   ] CoWork Auto-Allow starting — Python 3.12.9 — pid 38088
+2026-05-18 22:34:45 [INFO   ] App started — pid=38088

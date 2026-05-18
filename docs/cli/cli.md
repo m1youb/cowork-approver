@@ -74,4 +74,6 @@ Format: `%(asctime)s [%(levelname)s] %(message)s`
 - **No error deduplication** — the same UIA error logs every 1.5 s. Long outages fill the log quickly.
 - **No single-instance guard** — multiple copies can run simultaneously.
 - **`_has_deny_sibling` narrower than app.py** — only recognizes `"deny"` as a reject-side button. Browser and MCP dialogs with `"Cancel"` or other reject labels are skipped.
+- **No priority pass for "Always allow"** — `find_button_uia` uses a single regex pass. If a dialog exposes both "Always allow" and "Allow" buttons, whichever appears first in the UIA tree gets clicked. `app.py` solves this with a dedicated priority pass.
+- **DFS depth limit is 20, not 22** — `_recursive_find` goes 2 levels shallower than `app.py`'s `_find_all`. Deep Electron trees may be missed.
 - **Temp file `_screen_tmp.png`** — created in CWD during template scan, deleted after. On crash mid-scan the file persists.

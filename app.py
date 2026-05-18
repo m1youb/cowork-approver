@@ -5,6 +5,8 @@ Light-mode, Claude palette. Auto-clicks Allow in CoWork permission dialogs.
 
 import sys
 import os
+import re
+import json
 import threading
 import queue
 import traceback
@@ -20,6 +22,7 @@ LOG_FILE  = BASE_DIR / "autoallow.log"
 LOCK_FILE = BASE_DIR / ".autoallow.lock"
 CRASH_LOG = BASE_DIR / "crash.log"
 TEMPLATE_DIR = BASE_DIR / "templates"
+CONFIG_FILE  = BASE_DIR / "config.json"
 
 # ── logging setup ──────────────────────────────────────────────────────────
 _fmt = logging.Formatter("%(asctime)s [%(levelname)-7s] %(message)s",
@@ -116,15 +119,43 @@ ALLOW_LABELS = [
     "allow enter",
     "allow",
 ]
-DENY_EXCLUSIONS   = ["disallow", "not allow", "deny", "allow once"]
-REJECT_WORDS      = {"deny", "cancel", "no", "reject", "decline", "block", "esc"}
+DENY_EXCLUSIONS    = ["disallow", "not allow", "deny", "allow once"]
+REJECT_WORDS       = {"deny", "cancel", "no", "reject", "decline", "block", "esc"}
 PERMISSION_CONTEXT = ["claude would like to", "allow claude to", "cowork"]
-MATCH_CONF        = 0.80
+MATCH_CONF         = 0.80
+
+# Optional action-card labels the user can toggle on/off in the GUI.
+# (key, display_name, default_on, is_risky)
+OPTIONAL_LABELS = [
+    ("schedule", "Schedule", True,  False),
+    ("update",   "Update",   True,  False),
+    ("save",     "Save",     True,  False),
+    ("run",      "Run",      True,  False),
+    ("delete",   "Delete",   False, True),
+]
 
 # How many consecutive identical errors before we silence repeats (10 s window)
-ERROR_DEDUP_SECS  = 10
+ERROR_DEDUP_SECS       = 10
 # Max consecutive errors before backing off poll rate
 MAX_CONSECUTIVE_ERRORS = 5
+
+
+# ── config helpers ─────────────────────────────────────────────────────────
+
+def _load_config() -> dict:
+    try:
+        if CONFIG_FILE.exists():
+            return json.loads(CONFIG_FILE.read_text(encoding="utf-8"))
+    except Exception:
+        pass
+    return {}
+
+
+def _save_config(data: dict):
+    try:
+        CONFIG_FILE.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    except Exception as exc:
+        log.warning("Config save failed: %s", exc)
 
 
 # ══════════════════════════════════════════════════════════════════════════
@@ -174,7 +205,7 @@ class Engine:
     RUNNING = "running"
     CRASHED = "crashed"
 
-    def __init__(self, event_queue: queue.Queue):
+    def __init__(self, event_queue: queue.Queue, extra_labels: frozenset = frozenset()):
         self.q              = event_queue
         self.state          = self.STOPPED
         self.poll_interval  = 1.5
@@ -183,6 +214,7 @@ class Engine:
         self._last_click    = None
         self._stop_evt      = threading.Event()
         self._thread: threading.Thread | None = None
+        self._extra_labels: frozenset = extra_labels
 
         # Error deduplication
         self._last_err_msg  = ""
@@ -236,6 +268,9 @@ class Engine:
     def is_thread_alive(self) -> bool:
         return self._thread is not None and self._thread.is_alive()
 
+    def set_extra_labels(self, labels: frozenset):
+        self._extra_labels = labels  # atomic in CPython (GIL protects reference swap)
+
     # ── event emitter ────────────────────────────────────────────────────
 
     def _emit(self, msg: str, level: str = "info"):
@@ -261,7 +296,7 @@ class Engine:
         t = text.lower().strip()
         if any(x in t for x in DENY_EXCLUSIONS):
             return False
-        return any(x in t for x in ALLOW_LABELS)
+        return any(x in t for x in ALLOW_LABELS) or any(x in t for x in self._extra_labels)
 
     def _is_permission_dialog(self, elem) -> bool:
         """Return True if elem is inside a real Claude permission dialog."""
@@ -297,40 +332,72 @@ class Engine:
 
     # ── UIA traversal ────────────────────────────────────────────────────
 
-    def _find(self, elem, depth: int = 0):
+    @staticmethod
+    def _label_score(name: str) -> int:
+        """Higher score = more persistent/preferred button."""
+        n = name.lower()
+        if "always allow" in n:
+            return 4
+        if "allow all browser actions" in n:
+            return 3
+        return 1  # "allow enter", extra labels, etc.
+
+    def _find_all(self, elem, depth: int = 0, out: list | None = None) -> list:
+        """Collect all matching Allow buttons in the subtree (DFS, depth-capped)."""
+        if out is None:
+            out = []
         if depth > 22:
-            return None
+            return out
         try:
             n = (elem.element_info.name or "").lower()
             t = elem.element_info.control_type or ""
             if t == "Button" and self._matches(n) and self._is_permission_dialog(elem):
-                return elem
+                out.append(elem)
         except Exception:
-            return None
+            return out
         try:
             children = elem.children()
         except Exception:
-            return None
+            return out
         for c in children:
-            r = self._find(c, depth + 1)
-            if r:
-                return r
-        return None
+            self._find_all(c, depth + 1, out)
+        return out
+
+    def _find(self, elem, depth: int = 0):
+        """Return best-scoring matching button in subtree, preferring 'Always allow'."""
+        candidates = self._find_all(elem, depth)
+        if not candidates:
+            return None
+        return max(candidates, key=lambda b: self._label_score(b.element_info.name or ""))
 
     def _find_uia(self, win):
-        # Fast path: pywinauto's built-in search
+        extra = self._extra_labels  # atomic read
+
+        # Priority pass: prefer persistent-allow variants over one-time allow.
+        # "Always allow" (MCP dialog primary button) must win over plain "Allow".
+        _PRIORITY = r"(?i)(\balways allow\b|\ballow all browser actions\b)"
         try:
-            b = win.child_window(
-                title_re=r"(?i)\b(always allow|allow all browser actions|allow enter|allow)\b",
-                control_type="Button",
-            )
+            b = win.child_window(title_re=_PRIORITY, control_type="Button")
             if b.exists(timeout=0):
                 n = b.element_info.name or ""
                 if self._matches(n) and self._is_permission_dialog(b):
                     return b
         except Exception:
             pass
-        # Slow path: full recursive walk
+
+        # Full pattern: all allow labels + user-toggled extra labels
+        all_labels = list(ALLOW_LABELS) + list(extra)
+        pattern = "(?i)(" + "|".join(r"\b" + re.escape(l) + r"\b" for l in all_labels) + ")"
+        try:
+            b = win.child_window(title_re=pattern, control_type="Button")
+            if b.exists(timeout=0):
+                n = b.element_info.name or ""
+                if self._matches(n) and self._is_permission_dialog(b):
+                    return b
+        except Exception:
+            pass
+
+        # Slow path: full recursive walk (DFS, returns first match)
         return self._find(win)
 
     # ── click ────────────────────────────────────────────────────────────
@@ -499,8 +566,13 @@ class App(ctk.CTk):
         ctk.set_appearance_mode("light")
         ctk.set_default_color_theme("blue")
 
+        self._cfg = _load_config()
+        saved = self._cfg.get("extra_labels")
+        default_extra = frozenset(k for k, _, d, _ in OPTIONAL_LABELS if d)
+        initial_extra = frozenset(saved) if saved is not None else default_extra
+
         self.q          = queue.Queue()
-        self.engine     = Engine(self.q)
+        self.engine     = Engine(self.q, extra_labels=initial_extra)
         self._dot_phase = 0
 
         self._build_window()
@@ -517,14 +589,14 @@ class App(ctk.CTk):
 
     def _build_window(self):
         self.title("CoWork Auto-Allow")
-        self.geometry("370x570")
+        self.geometry("370x660")
         self.resizable(True, True)
-        self.minsize(370, 420)
+        self.minsize(370, 500)
         self.configure(fg_color=BG)
         self.update_idletasks()
         x = (self.winfo_screenwidth()  - 370) // 2
-        y = (self.winfo_screenheight() - 570) // 2
-        self.geometry(f"370x570+{x}+{y}")
+        y = (self.winfo_screenheight() - 660) // 2
+        self.geometry(f"370x660+{x}+{y}")
 
     # ── UI ──────────────────────────────────────────────────────────────────
 
@@ -589,7 +661,67 @@ class App(ctk.CTk):
             command=self._on_interval,
         )
         self._slider.set(1.5)
-        self._slider.pack(fill="x", padx=14, pady=(4, 12))
+        self._slider.pack(fill="x", padx=14, pady=(4, 8))
+
+        # auto-click labels
+        al_hdr = ctk.CTkFrame(self, fg_color="transparent")
+        al_hdr.pack(fill="x", padx=14)
+        ctk.CTkLabel(al_hdr, text="AUTO-CLICK",
+                     font=("Segoe UI Semibold", 9), text_color=TEXT2).pack(side="left")
+        ctk.CTkButton(
+            al_hdr, text="all", font=("Segoe UI", 9), text_color=ACCENT,
+            fg_color="transparent", hover_color=SURF2,
+            height=16, width=24, corner_radius=4, command=self._select_all_labels,
+        ).pack(side="right")
+        ctk.CTkButton(
+            al_hdr, text="none", font=("Segoe UI", 9), text_color=TEXT2,
+            fg_color="transparent", hover_color=SURF2,
+            height=16, width=34, corner_radius=4, command=self._clear_labels,
+        ).pack(side="right", padx=(0, 2))
+
+        al_card = ctk.CTkFrame(self, fg_color=SURF, corner_radius=8,
+                               border_width=1, border_color=BORDER)
+        al_card.pack(fill="x", padx=14, pady=(4, 8))
+
+        # always-active pills row
+        always_row = ctk.CTkFrame(al_card, fg_color="transparent")
+        always_row.pack(fill="x", padx=10, pady=(8, 4))
+        ctk.CTkLabel(always_row, text="Always:", font=("Segoe UI", 9),
+                     text_color=TEXT2).pack(side="left", padx=(0, 6))
+        for _pill in ["Allow", "Always Allow", "Browser"]:
+            ctk.CTkLabel(always_row, text=f" {_pill} ", font=("Segoe UI", 9),
+                         text_color=TEXT2, fg_color=SURF2,
+                         corner_radius=4).pack(side="left", padx=(0, 4))
+
+        tk.Frame(al_card, bg=BORDER, height=1).pack(fill="x", padx=10, pady=(2, 4))
+
+        # optional checkboxes
+        cb_frame = ctk.CTkFrame(al_card, fg_color="transparent")
+        cb_frame.pack(fill="x", pady=(0, 4))
+        _cols = 3
+        for c in range(_cols):
+            cb_frame.grid_columnconfigure(c, weight=1)
+
+        self._label_vars: dict = {}
+        saved_labels = self._cfg.get("extra_labels")
+        for i, (key, display, default, risky) in enumerate(OPTIONAL_LABELS):
+            checked = (key in saved_labels) if saved_labels is not None else default
+            var = tk.BooleanVar(value=checked)
+            self._label_vars[key] = var
+            row, col = divmod(i, _cols)
+            ctk.CTkCheckBox(
+                cb_frame,
+                text=display + (" ⚠" if risky else ""),
+                text_color=AMBER if risky else TEXT,
+                font=UI_SM,
+                variable=var, onvalue=True, offvalue=False,
+                fg_color=ACCENT, hover_color=ACCENTHV,
+                checkmark_color="#FFFFFF",
+                command=self._on_labels_changed,
+                width=90, height=22,
+            ).grid(row=row, column=col, sticky="w",
+                   padx=(10 if col == 0 else 2, 4),
+                   pady=(2, 4))
 
         # log header
         lh = ctk.CTkFrame(self, fg_color="transparent")
@@ -629,8 +761,13 @@ class App(ctk.CTk):
             fg_color="transparent", hover_color=SURF2,
             height=26, corner_radius=6, command=self._hide,
         ).pack(side="left")
+        ctk.CTkButton(
+            footer, text="Quit", font=UI_SM, text_color=RED,
+            fg_color="transparent", hover_color=SURF2,
+            height=26, corner_radius=6, command=self._quit,
+        ).pack(side="right")
         self._status_lbl = ctk.CTkLabel(footer, text="", font=("Segoe UI", 9), text_color=TEXT2)
-        self._status_lbl.pack(side="right")
+        self._status_lbl.pack(side="right", padx=(0, 6))
 
     # ── tray ─────────────────────────────────────────────────────────────────
 
@@ -687,6 +824,24 @@ class App(ctk.CTk):
     def _on_interval(self, v: float):
         self.engine.poll_interval = v
         self._iv_lbl.configure(text=f"{v:.1f} s")
+
+    def _on_labels_changed(self):
+        active = frozenset(k for k, var in self._label_vars.items() if var.get())
+        self.engine.set_extra_labels(active)
+        cfg = dict(self._cfg)
+        cfg["extra_labels"] = list(active)
+        self._cfg = cfg
+        _save_config(cfg)
+
+    def _select_all_labels(self):
+        for var in self._label_vars.values():
+            var.set(True)
+        self._on_labels_changed()
+
+    def _clear_labels(self):
+        for var in self._label_vars.values():
+            var.set(False)
+        self._on_labels_changed()
 
     def _clear_log(self):
         self._log.configure(state="normal")

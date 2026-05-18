@@ -33,6 +33,7 @@ Click **▶ START** in the window. Minimize to tray. Done.
 | `diagnostic.py` | Dumps UIA tree — use to debug button detection |
 | `requirements.txt` | Python dependencies |
 | `templates/` | Drop PNG crops of Allow buttons here (screenshot fallback) |
+| `config.json` | Auto-created — persists checkbox selections across restarts |
 | `autoallow.log` | Click history, rotated at 1 MB |
 | `crash.log` | Full tracebacks on unexpected errors |
 
@@ -43,17 +44,37 @@ Click **▶ START** in the window. Minimize to tray. Done.
 **Primary — UIA (Windows Accessibility):**  
 Scans Claude Desktop's accessibility tree every 1.5 s (adjustable). Finds `Button` elements whose name matches known Allow variants and confirms they live inside a real permission dialog (reject-side sibling or context text present).
 
-Known button variants detected:
+Button variants detected automatically (always active):
 
-| Dialog type | Button name |
-|-------------|-------------|
-| File / directory | `Allow Enter` |
-| MCP tool permission | `Always allow` |
+| Dialog type | Button name in UIA |
+|-------------|-------------------|
+| MCP tool permission | `Always allow Enter` |
 | Browser actions | `Allow all browser actions` |
-| Scheduled task | `Allow` |
+| File / directory | `Allow Enter` |
+| Generic / scheduled | `Allow` |
+
+Optional action-card buttons (toggle in GUI):
+
+| Action card | Button name | Default |
+|-------------|-------------|---------|
+| Schedule | `Schedule Enter` | On |
+| Update | `Update Enter` | On |
+| Save | `Save Enter` | On |
+| Run | `Run Enter` | On |
+| Delete | `Delete Enter` | Off (destructive) |
 
 **Fallback — Screenshot template matching:**  
 If UIA finds nothing and `templates/` contains PNGs, takes a full screenshot and locates the button visually at 80% confidence.
+
+---
+
+## AUTO-CLICK label selector
+
+The GUI shows a checkbox card for optional action-card buttons. Toggle which card types get auto-clicked. Changes take effect immediately without restart and persist in `config.json`.
+
+- **Always:** row — non-toggleable. Always allow, Always allow (MCP), Browser actions.
+- **Checkboxes** — Schedule, Update, Save, Run, Delete. Delete is off by default (destructive).
+- **all / none** — quick-select buttons in the section header.
 
 ---
 
@@ -75,16 +96,19 @@ python diagnostic.py
 
 Opens `uia_tree_dump.txt`. Search for `allow` — note the exact `name=` value. Add it to `ALLOW_LABELS` in `app.py` if missing.
 
+> **Note:** Run `app.py` first, then `diagnostic.py`. Claude Desktop (Electron/Chromium) only populates the UIA accessibility tree after an accessibility client queries it. Without `app.py` running, the tree will be shallow and dialog buttons won't appear.
+
 ---
 
 ## Settings
 
 All tunable via the GUI or by editing constants at the top of `app.py`:
 
-| Setting | Default | Description |
-|---------|---------|-------------|
+| Setting | Default | Where |
+|---------|---------|-------|
 | Poll interval | 1.5 s | Slider in GUI (0.5 – 5.0 s) |
 | Template confidence | 0.80 | `MATCH_CONF` in `app.py` |
+| Optional labels | see above | Checkboxes in GUI |
 
 ---
 
@@ -94,7 +118,7 @@ All tunable via the GUI or by editing constants at the top of `app.py`:
 
 ```
 2026-05-17 14:23:01 [INFO   ] Engine started (poll=1.5s)
-2026-05-17 14:23:04 [INFO   ] ✓  'Allow Enter'  (1587, 716)  [invoke]
+2026-05-17 14:23:04 [INFO   ] ✓  'Always allow Enter'  (1587, 716)  [invoke]
 2026-05-17 14:24:12 [WARNING] Claude Desktop not found — waiting
 ```
 
@@ -120,7 +144,7 @@ Move mouse to any screen corner — pyautogui failsafe aborts any in-progress mo
 ## Troubleshooting
 
 **Nothing gets clicked:**
-1. Run `diagnostic.py` while dialog is open
+1. Run `diagnostic.py` while dialog is open (with `app.py` already running)
 2. Search `uia_tree_dump.txt` for `allow`
 3. If found: note exact `name=` and check it against `ALLOW_LABELS` in `app.py`
 4. If not found: button is not in UIA tree → use screenshot fallback
@@ -129,7 +153,7 @@ Move mouse to any screen corner — pyautogui failsafe aborts any in-progress mo
 Lower `MATCH_CONF` in `app.py` from `0.80` to `0.70`. Crop template more tightly.
 
 **"Already running" on startup:**
-Delete `.autoallow.lock` in the project folder if the previous process crashed.
+Another instance is running — check the system tray. If the previous process crashed and the warning still appears, kill it via Task Manager (process: `python.exe` or `pythonw.exe`).
 
 **`crash.log` has COM errors:**
 Ensure `comtypes` is installed: `pip install comtypes`.
